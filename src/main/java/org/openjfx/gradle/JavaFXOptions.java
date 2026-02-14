@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Gluon
+ * Copyright (c) 2018, 2025, Gluon
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,39 +29,97 @@
  */
 package org.openjfx.gradle;
 
-import org.gradle.api.Project;
+import com.google.gradle.osdetector.OsDetector;
+import org.gradle.api.artifacts.Configuration;
+import org.gradle.api.artifacts.ConfigurationContainer;
+import org.gradle.api.artifacts.dsl.DependencyHandler;
+import org.gradle.api.artifacts.dsl.RepositoryHandler;
 import org.gradle.api.artifacts.repositories.FlatDirectoryArtifactRepository;
+import org.gradle.api.model.ObjectFactory;
+import org.gradle.api.provider.Property;
+import org.gradle.api.provider.SetProperty;
+import org.gradle.api.tasks.SourceSetContainer;
+import org.gradle.nativeplatform.MachineArchitecture;
+import org.gradle.nativeplatform.OperatingSystemFamily;
 
+import javax.inject.Inject;
 import java.io.File;
-import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Stream;
 
-import static org.openjfx.gradle.JavaFXModule.PREFIX_MODULE;
+abstract public class JavaFXOptions {
 
-public class JavaFXOptions {
-
-    private static final String MAVEN_JAVAFX_ARTIFACT_GROUP_ID = "org.openjfx";
+    static final String MAVEN_JAVAFX_ARTIFACT_GROUP_ID = "org.openjfx";
     private static final String JAVAFX_SDK_LIB_FOLDER = "lib";
+    private final SetProperty<String> modules;
+    private final Property<JavaFXPlatform> platform;
 
-    private final Project project;
-    private final JavaFXPlatform platform;
 
-    private String version = "16";
+    private String version = "17";
     private String sdk;
-    private String configuration = "implementation";
-    private String lastUpdatedConfiguration;
-    private List<String> modules = new ArrayList<>();
+    private String[] configurations = new String[] { "implementation" };
     private FlatDirectoryArtifactRepository customSDKArtifactRepository;
 
-    public JavaFXOptions(Project project) {
-        this.project = project;
-        this.platform = JavaFXPlatform.detect(project);
+    private final SourceSetContainer sourceSets;
+    private final Set<String> seenConfigurations = new HashSet<>();
+
+    @Inject
+    abstract protected ObjectFactory getObjects();
+
+    @Inject
+    abstract protected RepositoryHandler getRepositories();
+
+    @Inject
+    abstract protected ConfigurationContainer getConfigurationContainer();
+
+    @Inject
+    abstract protected DependencyHandler getDependencies();
+
+    public JavaFXOptions(SourceSetContainer sourceSets, OsDetector osDetector) {
+        this.sourceSets = sourceSets;
+        platform = getObjects().property(JavaFXPlatform.class);
+        getFxPlatform().convention(JavaFXPlatform.detect(osDetector));
+        setClasspathAttributesForAllSourceSets();
+        modules = getObjects().setProperty(String.class);
     }
 
+
     public JavaFXPlatform getPlatform() {
+        return getFxPlatform().get();
+    }
+
+    public  Property<JavaFXPlatform> getFxPlatform(){
         return platform;
+    }
+
+    /**
+     * Sets the target platform for the dependencies.
+     * @param platform platform classifier.
+     * Supported classifiers are linux, linux-aarch64, win/windows, osx/mac/macos or osx-aarch64/mac-aarch64/macos-aarch64.
+     */
+    public void setPlatform(String platform) {
+        this.getFxPlatform().set(JavaFXPlatform.fromString(platform));
+        setClasspathAttributesForAllSourceSets();
+    }
+
+    private void setClasspathAttributesForAllSourceSets() {
+        sourceSets.all(sourceSet -> {
+            setClasspathAttributes(getConfigurationContainer().getByName(sourceSet.getCompileClasspathConfigurationName()));
+            setClasspathAttributes(getConfigurationContainer().getByName(sourceSet.getRuntimeClasspathConfigurationName()));
+        });
+    }
+
+    private void setClasspathAttributes(Configuration classpath) {
+        classpath.getAttributes().attribute(
+                OperatingSystemFamily.OPERATING_SYSTEM_ATTRIBUTE,
+                getObjects().named(OperatingSystemFamily.class, platform.get().getOsFamily()));
+        classpath.getAttributes().attribute(
+                MachineArchitecture.ARCHITECTURE_ATTRIBUTE,
+                getObjects().named(MachineArchitecture.class, platform.get().getArch()));
     }
 
     public String getVersion() {
@@ -70,7 +128,6 @@ public class JavaFXOptions {
 
     public void setVersion(String version) {
         this.version = version;
-        updateJavaFXDependencies();
     }
 
     /**
@@ -80,64 +137,106 @@ public class JavaFXOptions {
      */
     public void setSdk(String sdk) {
         this.sdk = sdk;
-        updateJavaFXDependencies();
+        updateCustomSDKArtifactRepository();
     }
 
     public String getSdk() {
         return sdk;
     }
 
-    /** Set the configuration name for dependencies, e.g.
+    /**
+     * Set the configuration name for dependencies, e.g.
      * 'implementation', 'compileOnly' etc.
      * @param configuration The configuration name for dependencies
      */
     public void setConfiguration(String configuration) {
-        this.configuration = configuration;
-        updateJavaFXDependencies();
+        setConfigurations(new String[] { configuration });
+    }
+
+    /**
+     * Set the configurations for dependencies, e.g.
+     * 'implementation', 'compileOnly' etc.
+     * @param configurations List of configuration names
+     */
+    public void setConfigurations(String[] configurations) {
+        this.configurations = configurations;
+        for (String conf : configurations) {
+            if (!seenConfigurations.contains(conf)) {
+                declareFXDependencies(conf);
+                seenConfigurations.add(conf);
+            }
+        }
     }
 
     public String getConfiguration() {
-        return configuration;
+        return configurations[0];
     }
 
-    public List<String> getModules() {
+    public String[] getConfigurations() {
+        return configurations;
+    }
+
+    public SetProperty<String> getFxModules() {
         return modules;
     }
 
+    public Set<String> getModules() {
+        return modules.get();
+    }
+
     public void setModules(List<String> modules) {
-        this.modules = modules;
-        updateJavaFXDependencies();
+        this.modules.set(modules);
+
     }
 
     public void modules(String...moduleNames) {
         setModules(List.of(moduleNames));
     }
 
-    private void updateJavaFXDependencies() {
-        clearJavaFXDependencies();
+    private void declareFXDependencies(String conf) {
+        // Use 'withDependencies' to declare the dependencies late (i.e., right before dependency resolution starts).
+        // This allows users to make multiple modifications to the 'configurations' list at arbitrary times during
+        // build configuration.
+        getConfigurationContainer().getByName(conf).withDependencies(dependencySet -> {
+            if (!List.of(configurations).contains(conf)) {
+                // configuration was removed: do nothing
+                return;
+            }
 
-        String configuration = getConfiguration();
-        JavaFXModule.getJavaFXModules(this.modules).stream()
-                .sorted()
-                .forEach(javaFXModule -> {
-                    if (customSDKArtifactRepository != null) {
-                        project.getDependencies().add(configuration, Map.of("name", javaFXModule.getModuleName()));
-                    } else {
-                        project.getDependencies().add(configuration,
-                                String.format("%s:%s:%s:%s", MAVEN_JAVAFX_ARTIFACT_GROUP_ID, javaFXModule.getArtifactName(),
-                                        getVersion(), getPlatform().getClassifier()));
-                    }
-                });
-        lastUpdatedConfiguration = configuration;
+            var javaFXModules = JavaFXModule.getJavaFXModules(getModules());
+            if (customSDKArtifactRepository == null) {
+                javaFXModules.stream()
+                        .sorted()
+                        .forEach(javaFXModule ->
+                                dependencySet.add(getDependencies().create(
+                                        MAVEN_JAVAFX_ARTIFACT_GROUP_ID + ":" +
+                                                javaFXModule.getArtifactName() + ":" +
+                                                getVersion())));
+            } else {
+                // Use the list of dependencies of each module to also add direct dependencies for those.
+                // This is needed, because there is no information about transitive dependencies in the metadata
+                // of the modules (as there is no such metadata in the local sdk).
+                var javaFXModulesWithTransitives = Stream.concat(
+                                javaFXModules.stream(),
+                                javaFXModules.stream()
+                                        .flatMap(m -> m.getDependentModules().stream()))
+                        .distinct()
+                        .sorted();
+
+                javaFXModulesWithTransitives.forEach(javaFXModule ->
+                        dependencySet.add(getDependencies().create(
+                                Map.of("name", javaFXModule.getModuleName()))));
+            }
+        });
     }
 
-    private void clearJavaFXDependencies() {
+    private void updateCustomSDKArtifactRepository() {
         if (customSDKArtifactRepository != null) {
-            project.getRepositories().remove(customSDKArtifactRepository);
+            getRepositories().remove(customSDKArtifactRepository);
             customSDKArtifactRepository = null;
         }
 
-        if (sdk != null && ! sdk.isEmpty()) {
+        if (sdk != null && !sdk.isEmpty()) {
             Map<String, String> dirs = new HashMap<>();
             dirs.put("name", "customSDKArtifactRepository");
             if (sdk.endsWith(File.separator)) {
@@ -145,20 +244,7 @@ public class JavaFXOptions {
             } else {
                 dirs.put("dirs", sdk + File.separator + JAVAFX_SDK_LIB_FOLDER);
             }
-            customSDKArtifactRepository = project.getRepositories().flatDir(dirs);
-        }
-
-        if (lastUpdatedConfiguration == null) {
-            return;
-        }
-        var configuration = project.getConfigurations().findByName(lastUpdatedConfiguration);
-        if (configuration != null) {
-            if (customSDKArtifactRepository != null) {
-                configuration.getDependencies()
-                        .removeIf(dependency -> dependency.getName().startsWith(PREFIX_MODULE));
-            }
-            configuration.getDependencies()
-                    .removeIf(dependency -> MAVEN_JAVAFX_ARTIFACT_GROUP_ID.equals(dependency.getGroup()));
+            customSDKArtifactRepository = getRepositories().flatDir(dirs);
         }
     }
 }

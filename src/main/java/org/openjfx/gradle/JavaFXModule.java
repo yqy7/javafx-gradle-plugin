@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, 2020, Gluon
+ * Copyright (c) 2018, 2025, Gluon
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,7 +31,7 @@ package org.openjfx.gradle;
 
 import org.gradle.api.GradleException;
 
-import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -53,7 +53,7 @@ public enum JavaFXModule {
     static final String PREFIX_MODULE = "javafx.";
     private static final String PREFIX_ARTIFACT = "javafx-";
 
-    private List<JavaFXModule> dependentModules;
+    private final List<JavaFXModule> dependentModules;
 
     JavaFXModule(JavaFXModule...dependentModules) {
         this.dependentModules = List.of(dependentModules);
@@ -82,17 +82,15 @@ public enum JavaFXModule {
         return p.matcher(jarFileName).matches();
     }
 
-    public static Set<JavaFXModule> getJavaFXModules(List<String> moduleNames) {
+    public static Set<JavaFXModule> getJavaFXModules(Collection<String> moduleNames) {
         validateModules(moduleNames);
-
         return moduleNames.stream()
                 .map(JavaFXModule::fromModuleName)
                 .flatMap(Optional::stream)
-                .flatMap(javaFXModule -> javaFXModule.getMavenDependencies().stream())
                 .collect(Collectors.toSet());
     }
 
-    public static void validateModules(List<String> moduleNames) {
+    public static void validateModules(Collection<String> moduleNames) {
         var invalidModules = moduleNames.stream()
                 .filter(module -> JavaFXModule.fromModuleName(module).isEmpty())
                 .collect(Collectors.toList());
@@ -104,11 +102,5 @@ public enum JavaFXModule {
 
     public List<JavaFXModule> getDependentModules() {
         return dependentModules;
-    }
-
-    public List<JavaFXModule> getMavenDependencies() {
-        List<JavaFXModule> dependencies = new ArrayList<>(dependentModules);
-        dependencies.add(0, this);
-        return dependencies;
     }
 }
