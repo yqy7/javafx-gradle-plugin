@@ -4,7 +4,7 @@ plugins {
     id 'com.github.hierynomus.license' version '0.16.1'
 }
 
-group = 'org.openjfx'
+group = 'io.github.yqy7'
 version = '0.1.1-SNAPSHOT'
 
 java {

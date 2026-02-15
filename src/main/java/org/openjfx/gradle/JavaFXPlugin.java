@@ -47,8 +47,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.openjfx.gradle.JavaFXOptions.MAVEN_JAVAFX_ARTIFACT_GROUP_ID;
-
 @NonNullApi
 public class JavaFXPlugin implements Plugin<Project> {
 
@@ -73,7 +71,7 @@ public class JavaFXPlugin implements Plugin<Project> {
         // Future JavaFX versions could publish this information using Gradle Metadata.
         for (JavaFXModule javaFXModule: JavaFXModule.values()) {
             project.getDependencies().getComponents().withModule(
-                    MAVEN_JAVAFX_ARTIFACT_GROUP_ID + ":" + javaFXModule.getArtifactName(),
+                    javaFXOptions.getGroupId() + ":" + javaFXModule.getArtifactName(),
                     JavaFXComponentMetadataRule.class);
         }
 

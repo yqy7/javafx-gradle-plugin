@@ -58,6 +58,7 @@ abstract public class JavaFXOptions {
     private final SetProperty<String> modules;
     private final Property<JavaFXPlatform> platform;
 
+    private String groupId = MAVEN_JAVAFX_ARTIFACT_GROUP_ID;
 
     private String version = "17";
     private String sdk;
@@ -189,6 +190,14 @@ abstract public class JavaFXOptions {
 
     }
 
+    public String getGroupId() {
+        return groupId;
+    }
+
+    public void setGroupId(String groupId) {
+        this.groupId = groupId;
+    }
+
     public void modules(String...moduleNames) {
         setModules(List.of(moduleNames));
     }
@@ -209,7 +218,7 @@ abstract public class JavaFXOptions {
                         .sorted()
                         .forEach(javaFXModule ->
                                 dependencySet.add(getDependencies().create(
-                                        MAVEN_JAVAFX_ARTIFACT_GROUP_ID + ":" +
+                                        getGroupId() + ":" +
                                                 javaFXModule.getArtifactName() + ":" +
                                                 getVersion())));
             } else {
